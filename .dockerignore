@@ -1,0 +1,19 @@
+# VCS
+.git
+.gitignore
+.gitattributes
+
+# IDE/editor files
+.vscode
+.idea
+*.iml
+
+# Build outputs
+target
+
+# OS files
+.DS_Store
+
+# Local environment and secrets
+.env
+.env.*
