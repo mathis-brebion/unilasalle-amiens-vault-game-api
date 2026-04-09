@@ -9,6 +9,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.net.URI;
 import java.time.LocalDate;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -123,7 +124,7 @@ public class GameController {
 
     private Set<Platform> resolvePlatforms(Set<Long> platformIds) {
         if (platformIds == null || platformIds.isEmpty()) {
-            return Set.of();
+            return new HashSet<>();
         }
 
         List<Platform> platforms = platformRepository.findAllById(platformIds);
@@ -132,7 +133,7 @@ public class GameController {
                     "One or more platformIds do not exist.");
         }
 
-        return Set.copyOf(platforms);
+        return new HashSet<>(platforms);
     }
 
     private GameResponse toResponse(Game game) {

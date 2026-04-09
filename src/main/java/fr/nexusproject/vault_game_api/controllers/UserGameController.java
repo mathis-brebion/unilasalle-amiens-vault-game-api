@@ -2,14 +2,20 @@ package fr.nexusproject.vault_game_api.controllers;
 
 import fr.nexusproject.vault_game_api.models.AppUser;
 import fr.nexusproject.vault_game_api.models.Game;
+import fr.nexusproject.vault_game_api.models.Platform;
 import fr.nexusproject.vault_game_api.models.UserGame;
 import fr.nexusproject.vault_game_api.models.UserGameStatus;
 import fr.nexusproject.vault_game_api.repository.AppUserRepository;
 import fr.nexusproject.vault_game_api.repository.GameRepository;
+import fr.nexusproject.vault_game_api.repository.PlatformRepository;
 import fr.nexusproject.vault_game_api.repository.UserGameRepository;
+import fr.nexusproject.vault_game_api.services.RawgGameService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import java.net.URI;
+import java.util.Set;
+import java.util.stream.Collectors;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -35,13 +41,19 @@ public class UserGameController {
     private final UserGameRepository userGameRepository;
     private final AppUserRepository appUserRepository;
     private final GameRepository gameRepository;
+    private final PlatformRepository platformRepository;
+    private final RawgGameService rawgGameService;
 
     public UserGameController(UserGameRepository userGameRepository,
             AppUserRepository appUserRepository,
-            GameRepository gameRepository) {
+            GameRepository gameRepository,
+            PlatformRepository platformRepository,
+            RawgGameService rawgGameService) {
         this.userGameRepository = userGameRepository;
         this.appUserRepository = appUserRepository;
         this.gameRepository = gameRepository;
+        this.platformRepository = platformRepository;
+        this.rawgGameService = rawgGameService;
     }
 
     @GetMapping
@@ -65,18 +77,19 @@ public class UserGameController {
             @PathVariable Long userId,
             @Valid @RequestBody AddUserGameRequest request) {
         AppUser user = findUserOrThrow(userId);
-        Game game = findGameOrThrow(request.gameId());
+        Game game = findOrCreateGameByRawgId(request.rawgId());
+        UserGameStatus status = request.status() != null ? request.status() : UserGameStatus.WISHLIST;
 
-        UserGame userGame = userGameRepository.findByUserIdAndGameId(userId, request.gameId())
+        UserGame userGame = userGameRepository.findByUserIdAndGameId(userId, game.getId())
                 .map(existing -> {
-                    existing.setStatus(request.status());
+                    existing.setStatus(status);
                     return existing;
                 })
-                .orElseGet(() -> new UserGame(user, game, request.status()));
+                .orElseGet(() -> new UserGame(user, game, status));
 
         UserGame saved = userGameRepository.save(userGame);
         return ResponseEntity
-                .created(URI.create("/api/users/" + userId + "/games/" + request.gameId()))
+                .created(URI.create("/api/users/" + userId + "/games/" + game.getId()))
                 .body(toResponse(saved));
     }
 
@@ -125,6 +138,45 @@ public class UserGameController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Game not found: " + id));
     }
 
+    private Game findOrCreateGameByRawgId(Long rawgId) {
+        return gameRepository.findByRawgId(rawgId).orElseGet(() -> createGameFromRawg(rawgId));
+    }
+
+    private Game createGameFromRawg(Long rawgId) {
+        RawgGameService.RawgGameDetails rawgGame = rawgGameService.getGameDetails(rawgId);
+
+        Game game = new Game(
+                rawgGame.rawgId(),
+                rawgGame.name(),
+                rawgGame.slug(),
+                rawgGame.genre(),
+                rawgGame.releaseYear(),
+                rawgGame.releasedAt(),
+                rawgGame.backgroundImageUrl());
+        game.setPlatforms(resolvePlatforms(rawgGame.platformNames()));
+
+        try {
+            return gameRepository.save(game);
+        } catch (DataIntegrityViolationException exception) {
+            return gameRepository.findByRawgId(rawgId)
+                    .orElseThrow(() -> new ResponseStatusException(
+                            HttpStatus.CONFLICT,
+                            "A game already exists with this rawgId.",
+                            exception));
+        }
+    }
+
+    private Set<Platform> resolvePlatforms(Set<String> platformNames) {
+        if (platformNames == null || platformNames.isEmpty()) {
+            return Set.of();
+        }
+
+        return platformNames.stream()
+                .map(platformRepository::findByNameIgnoreCase)
+                .flatMap(java.util.Optional::stream)
+                .collect(Collectors.toSet());
+    }
+
     private UserGameResponse toResponse(UserGame userGame) {
         return new UserGameResponse(
                 userGame.getId(),
@@ -136,8 +188,8 @@ public class UserGameController {
     }
 
     public record AddUserGameRequest(
-            @NotNull Long gameId,
-            @NotNull UserGameStatus status) {
+            @NotNull Long rawgId,
+            UserGameStatus status) {
     }
 
     public record UpdateUserGameStatusRequest(@NotNull UserGameStatus status) {
